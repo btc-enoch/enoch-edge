@@ -1,0 +1,34 @@
+name: enoch-edge
+
+# Standalone compose for the edge proxy. Brought up independently of
+# the enoch operator stack — they connect over the host network via
+# OPERATOR_URL=http://host.docker.internal:8080 by default.
+#
+# To run edge in the same docker network as enoch (skipping the host
+# bridge hop), uncomment the `networks:` block at the bottom and set
+# OPERATOR_URL=http://operator-0:8080.
+
+services:
+  edge:
+    build:
+      context: .
+      target: edge
+    image: enoch/edge:dev
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      EDGE_LISTEN: ":8081"
+      OPERATOR_URL: "http://host.docker.internal:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8081/v1/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+# networks:
+#   default:
+#     name: enoch_default
+#     external: true
