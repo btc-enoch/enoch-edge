@@ -17,24 +17,39 @@ import (
 )
 
 // New returns the edge's top-level http.Handler.
+//
+// Routes are split into two groups so that the 30s request timeout
+// applies to short-lived JSON endpoints but NOT to /v1/events: SSE
+// connections are long-lived by design, and a blanket timeout would
+// kill the stream after 30s, force the wallet into reconnect-with-
+// backoff, and silently lose events during the reconnect window
+// (the original bug that hid an alice→wallet send from the iOS app).
 func New(logger *log.Logger, op *upstream.Client, oracle *feeoracle.Client, bus *eventbus.Bus) http.Handler {
 	r := chi.NewRouter()
 
+	// Cross-cutting middleware that should apply to every route.
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(30 * time.Second))
 	r.Use(loggerMiddleware(logger))
 	r.Use(jsonContentType)
 
-	r.Get("/v1/health", handleHealth)
-	r.Get("/v1/info", handleInfo(op))
-	r.Get("/v1/utxos/{addr}", handleUTXOs(op))
-	r.Get("/v1/balance/{addr}", handleBalance(op))
-	r.Get("/v1/address_history/{addr}", handleAddressHistory(op))
-	r.Get("/v1/fee_oracle", handleFeeOracle(oracle))
+	// JSON endpoints — 30s deadline keeps slow clients from holding
+	// connections forever.
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.Timeout(30 * time.Second))
+		r.Get("/v1/health", handleHealth)
+		r.Get("/v1/info", handleInfo(op))
+		r.Get("/v1/utxos/{addr}", handleUTXOs(op))
+		r.Get("/v1/balance/{addr}", handleBalance(op))
+		r.Get("/v1/address_history/{addr}", handleAddressHistory(op))
+		r.Get("/v1/fee_oracle", handleFeeOracle(oracle))
+		r.Post("/v1/submit_tx", handleSubmitTx(op))
+	})
+
+	// Long-lived SSE — no per-request timeout. Lifetime is bounded
+	// by the client's connection (or process shutdown).
 	r.Get("/v1/events", handleEvents(bus))
-	r.Post("/v1/submit_tx", handleSubmitTx(op))
 
 	return r
 }
