@@ -44,6 +44,7 @@ func New(logger *log.Logger, op *upstream.Client, oracle *feeoracle.Client, bus 
 		r.Get("/v1/balance/{addr}", handleBalance(op))
 		r.Get("/v1/address_history/{addr}", handleAddressHistory(op))
 		r.Get("/v1/fee_oracle", handleFeeOracle(oracle))
+		r.Get("/v1/pending_withdrawals", handlePendingWithdrawals(op))
 		r.Post("/v1/submit_tx", handleSubmitTx(op))
 	})
 
