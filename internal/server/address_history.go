@@ -20,14 +20,9 @@ import (
 func handleAddressHistory(op *upstream.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		input := chi.URLParam(req, "addr")
-		pkh, err := address.DecodeToPKH(input)
+		enochAddr, err := address.NormalizeToEnoch(input)
 		if err != nil {
 			http.Error(w, "decode address: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		enochAddr, err := address.EncodeEnoch(pkh)
-		if err != nil {
-			http.Error(w, "encode enoch: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 

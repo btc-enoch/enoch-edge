@@ -1,63 +1,81 @@
 package address
 
 import (
-	"bytes"
-	"encoding/hex"
 	"testing"
 
 	"github.com/btcsuite/btcd/btcutil/bech32"
 )
 
-// TestEnochRoundTrip exercises the path we hit on every wallet
-// request: arbitrary pkh → enoch1 → back to pkh.
-func TestEnochRoundTrip(t *testing.T) {
-	pkh := []byte{
-		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
-		0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14,
-	}
-	addr, err := EncodeEnoch(pkh)
+// TestNormalizeLegacyEnochPassthrough — a valid enoch1... legacy
+// (P2PKH) address comes back unchanged. The operator's
+// DecodeEnochAddressAny owns the full validation; edge just confirms
+// the bech32 envelope decodes cleanly so a typo doesn't open a stream.
+func TestNormalizeLegacyEnochPassthrough(t *testing.T) {
+	const addr = "enoch1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqljsyzs" // 20 zero bytes
+	got, err := NormalizeToEnoch(addr)
 	if err != nil {
-		t.Fatalf("EncodeEnoch: %v", err)
+		t.Fatalf("NormalizeToEnoch(%q): %v", addr, err)
 	}
-	got, err := DecodeToPKH(addr)
-	if err != nil {
-		t.Fatalf("DecodeToPKH(%q): %v", addr, err)
-	}
-	if !bytes.Equal(got, pkh) {
-		t.Errorf("round trip mismatch: got %x, want %x", got, pkh)
+	if got != addr {
+		t.Errorf("legacy enoch1 should pass through; got %q want %q", got, addr)
 	}
 }
 
-// TestBitcoinMainnetP2WPKH uses the canonical BIP173 test vector
-// to make sure we read native-segwit P2WPKH the same way bitcoind
-// and every other wallet does.
-func TestBitcoinMainnetP2WPKH(t *testing.T) {
-	const addr = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
-	expected, _ := hex.DecodeString("751e76e8199196d454941c45d1b3a323f1433bd6")
-
-	got, err := DecodeToPKH(addr)
+// TestNormalizeP2TREnochPassthrough — post-#109 enoch1p... addresses
+// must pass through. Pre-#109 this was rejected ("expected 20-byte
+// payload, got 33") which broke the iOS wallet's SSE filter.
+func TestNormalizeP2TREnochPassthrough(t *testing.T) {
+	const addr = "enoch1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxq65mkkv"
+	got, err := NormalizeToEnoch(addr)
 	if err != nil {
-		t.Fatalf("DecodeToPKH: %v", err)
+		t.Fatalf("NormalizeToEnoch(%q): %v", addr, err)
 	}
-	if !bytes.Equal(got, expected) {
-		t.Errorf("pkh = %x, want %x", got, expected)
-	}
-}
-
-// TestRejectsTaproot keeps us honest about which witness versions
-// are supported. Taproot uses bech32m, not bech32, so the underlying
-// library rejects it before our witness-version check fires — the
-// outcome (error returned) is what matters for callers.
-func TestRejectsTaproot(t *testing.T) {
-	const addr = "bc1pw508d6qejxtdg4y5r3zarvary0c5xw7kw508d6qejxtdg4y5r3zarvary0c5xw7k7grplx"
-	if _, err := DecodeToPKH(addr); err == nil {
-		t.Fatal("expected error for taproot address, got nil")
+	if got != addr {
+		t.Errorf("P2TR enoch1p should pass through; got %q want %q", got, addr)
 	}
 }
 
-// TestRejectsUnknownHRP makes sure an unrelated coin's bech32 with
-// a valid checksum still fails — the HRP guard is doing real work.
-func TestRejectsUnknownHRP(t *testing.T) {
+// TestNormalizeBitcoinP2WPKH — the canonical BIP-173 mainnet vector
+// should re-encode as the corresponding enoch1... form. This is the
+// "wallet typed bc1q..." case, where edge bridges the user's input
+// form into the operator's enoch1 namespace.
+func TestNormalizeBitcoinP2WPKH(t *testing.T) {
+	const btcAddr = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
+	got, err := NormalizeToEnoch(btcAddr)
+	if err != nil {
+		t.Fatalf("NormalizeToEnoch(%q): %v", btcAddr, err)
+	}
+	// Same 20-byte program, encoded under the enoch HRP. We compute the
+	// expected string from the program directly to keep the test
+	// honest if the bech32 lib changes.
+	const expectedPKHHex = "751e76e8199196d454941c45d1b3a323f1433bd6"
+	pkh := mustHex(t, expectedPKHHex)
+	conv, err := bech32.ConvertBits(pkh, 8, 5, true)
+	if err != nil {
+		t.Fatalf("ConvertBits: %v", err)
+	}
+	want, err := bech32.Encode(EnochHRP, conv)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if got != want {
+		t.Errorf("P2WPKH translation mismatch: got %q want %q", got, want)
+	}
+}
+
+// TestNormalizeRejectsBitcoinTaproot — bc1p... is *Bitcoin* Taproot
+// (output key), which has no Enoch L2 mapping. Should fail cleanly.
+func TestNormalizeRejectsBitcoinTaproot(t *testing.T) {
+	const addr = "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr"
+	if _, err := NormalizeToEnoch(addr); err == nil {
+		t.Fatal("expected error for Bitcoin Taproot address, got nil")
+	}
+}
+
+// TestNormalizeRejectsUnknownHRP — bech32 with a valid checksum but
+// an unrelated HRP must fail. Guards against accidentally treating
+// a doge1... address as a Bitcoin one.
+func TestNormalizeRejectsUnknownHRP(t *testing.T) {
 	pkh := make([]byte, 20)
 	conv, err := bech32.ConvertBits(pkh, 8, 5, true)
 	if err != nil {
@@ -67,16 +85,41 @@ func TestRejectsUnknownHRP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	if _, err := DecodeToPKH(addr); err == nil {
+	if _, err := NormalizeToEnoch(addr); err == nil {
 		t.Fatalf("expected error for hrp=doge, got nil")
 	}
 }
 
-// TestRejectsGarbage covers the simplest input-validation path — a
-// non-bech32 string should fail cleanly with a decode error rather
-// than panic.
-func TestRejectsGarbage(t *testing.T) {
-	if _, err := DecodeToPKH("not-an-address"); err == nil {
+// TestNormalizeRejectsGarbage — a non-bech32 string fails cleanly
+// rather than panicking deep inside the decoder.
+func TestNormalizeRejectsGarbage(t *testing.T) {
+	if _, err := NormalizeToEnoch("not-an-address"); err == nil {
 		t.Fatal("expected error for garbage input, got nil")
 	}
+}
+
+func mustHex(t *testing.T, s string) []byte {
+	t.Helper()
+	out := make([]byte, len(s)/2)
+	for i := 0; i < len(s); i += 2 {
+		var hi, lo byte
+		switch {
+		case s[i] >= '0' && s[i] <= '9':
+			hi = s[i] - '0'
+		case s[i] >= 'a' && s[i] <= 'f':
+			hi = s[i] - 'a' + 10
+		default:
+			t.Fatalf("bad hex char %q", s[i])
+		}
+		switch {
+		case s[i+1] >= '0' && s[i+1] <= '9':
+			lo = s[i+1] - '0'
+		case s[i+1] >= 'a' && s[i+1] <= 'f':
+			lo = s[i+1] - 'a' + 10
+		default:
+			t.Fatalf("bad hex char %q", s[i+1])
+		}
+		out[i/2] = hi<<4 | lo
+	}
+	return out
 }

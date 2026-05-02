@@ -31,20 +31,16 @@ func handleEvents(bus *eventbus.Bus) http.HandlerFunc {
 			return
 		}
 
-		// Normalize wallet's address filter to the enoch1 form the
-		// upstream events use. Decoding before we set SSE headers
-		// means a bad input gets a JSON 400, not a half-open stream.
+		// Normalize wallet's address filter to the canonical enoch1...
+		// or enoch1p... form the upstream events use. Decoding before
+		// we set SSE headers means a bad input gets a JSON 400, not a
+		// half-open stream.
 		raw := req.URL.Query()["addr"]
 		filter := make([]string, 0, len(raw))
 		for _, a := range raw {
-			pkh, err := address.DecodeToPKH(a)
+			enoch, err := address.NormalizeToEnoch(a)
 			if err != nil {
 				http.Error(w, "decode addr "+a+": "+err.Error(), http.StatusBadRequest)
-				return
-			}
-			enoch, err := address.EncodeEnoch(pkh)
-			if err != nil {
-				http.Error(w, "encode enoch: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
 			filter = append(filter, enoch)
