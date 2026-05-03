@@ -5,6 +5,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"time"
 )
 
@@ -13,6 +14,20 @@ type Config struct {
 	OperatorURL   string
 	FeeOracleURL  string
 	FeeOracleTTL  time.Duration
+
+	// FederationURLs, when non-empty, switches edge into federation
+	// mode. Indexed by operator_id (0..N-1). /submit_tx uses these
+	// for leader-aware routing: try the last-known leader, on 503
+	// read `leader_id` from the response body and retry against the
+	// matching URL. Read endpoints continue to hit FederationURLs[0]
+	// (state propagates across operators via quorum so any operator
+	// is eventually consistent).
+	//
+	// Set via EDGE_FEDERATION_URLS as a comma-separated list, e.g.:
+	//   EDGE_FEDERATION_URLS=http://host.docker.internal:18080,
+	//                       http://host.docker.internal:18081,
+	//                       http://host.docker.internal:18082
+	FederationURLs []string
 }
 
 // Load reads the edge's environment, applying sensible dev defaults.
@@ -20,12 +35,21 @@ type Config struct {
 // host network; on Linux the compose `extra_hosts` entry maps it to
 // the host gateway so this works there too.
 func Load() Config {
-	return Config{
+	cfg := Config{
 		Listen:       getenv("EDGE_LISTEN", ":8081"),
 		OperatorURL:  getenv("OPERATOR_URL", "http://host.docker.internal:8080"),
 		FeeOracleURL: getenv("FEE_ORACLE_URL", "https://mempool.space/api/v1/fees/recommended"),
 		FeeOracleTTL: 30 * time.Second,
 	}
+	if raw := os.Getenv("EDGE_FEDERATION_URLS"); raw != "" {
+		for _, u := range strings.Split(raw, ",") {
+			u = strings.TrimSpace(u)
+			if u != "" {
+				cfg.FederationURLs = append(cfg.FederationURLs, u)
+			}
+		}
+	}
+	return cfg
 }
 
 func getenv(k, def string) string {

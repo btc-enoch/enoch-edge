@@ -24,7 +24,12 @@ import (
 // kill the stream after 30s, force the wallet into reconnect-with-
 // backoff, and silently lose events during the reconnect window
 // (the original bug that hid an alice→wallet send from the iOS app).
-func New(logger *log.Logger, op *upstream.Client, oracle *feeoracle.Client, bus *eventbus.Bus) http.Handler {
+//
+// fedPool is non-nil iff edge is in federation mode (EDGE_FEDERATION_URLS
+// set). When non-nil, /submit_tx is routed through the pool's
+// leader-aware retry path; read endpoints continue to hit `op` (the
+// operator the pool currently believes is leader).
+func New(logger *log.Logger, op *upstream.Client, fedPool *upstream.FederationPool, oracle *feeoracle.Client, bus *eventbus.Bus) http.Handler {
 	r := chi.NewRouter()
 
 	// Cross-cutting middleware that should apply to every route.
@@ -45,7 +50,11 @@ func New(logger *log.Logger, op *upstream.Client, oracle *feeoracle.Client, bus 
 		r.Get("/v1/address_history/{addr}", handleAddressHistory(op))
 		r.Get("/v1/fee_oracle", handleFeeOracle(oracle))
 		r.Get("/v1/pending_withdrawals", handlePendingWithdrawals(op))
-		r.Post("/v1/submit_tx", handleSubmitTx(op))
+		if fedPool != nil {
+			r.Post("/v1/submit_tx", handleSubmitTxFederation(fedPool))
+		} else {
+			r.Post("/v1/submit_tx", handleSubmitTx(op))
+		}
 	})
 
 	// Long-lived SSE — no per-request timeout. Lifetime is bounded

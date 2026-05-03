@@ -20,6 +20,11 @@ services:
     environment:
       EDGE_LISTEN: ":8081"
       OPERATOR_URL: "http://host.docker.internal:8080"
+      # #102 federation mode: comma-separated operator URLs ordered by
+      # operator id. When set, /submit_tx is routed leader-aware (try
+      # current leader, on 503 read leader_id from body and retry).
+      # Set to empty (or unset) for single-op mode.
+      EDGE_FEDERATION_URLS: "${EDGE_FEDERATION_URLS:-}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
