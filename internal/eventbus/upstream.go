@@ -126,17 +126,34 @@ func (u *UpstreamClient) dispatch(eventType string, data []byte) {
 }
 
 // extractAddresses pulls the per-event address list out of `data`
-// for filterable event types (currently tx_applied). Other event
-// types deliver to all subscribers.
+// for filterable event types. Other event types deliver to all
+// subscribers (state-root-signed light-client events, withdrawal
+// status updates that wallets correlate by burn hash client-side).
 func extractAddresses(eventType string, data []byte) []string {
-	if eventType != "tx_applied" {
-		return nil
+	switch eventType {
+	case "tx_applied":
+		var d struct {
+			Addresses []string `json:"addresses"`
+		}
+		if err := json.Unmarshal(data, &d); err != nil {
+			return nil
+		}
+		return d.Addresses
+	case "deposit_pending", "deposit_minted":
+		// #108: each deposit lifecycle event names exactly one L2
+		// recipient. Filter by it so wallets only see their own
+		// deposits — keeps the wire small and avoids leaking other
+		// users' deposit txids over a wallet's SSE stream.
+		var d struct {
+			Recipient string `json:"recipient"`
+		}
+		if err := json.Unmarshal(data, &d); err != nil {
+			return nil
+		}
+		if d.Recipient == "" {
+			return nil
+		}
+		return []string{d.Recipient}
 	}
-	var d struct {
-		Addresses []string `json:"addresses"`
-	}
-	if err := json.Unmarshal(data, &d); err != nil {
-		return nil
-	}
-	return d.Addresses
+	return nil
 }
