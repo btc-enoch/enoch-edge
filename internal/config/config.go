@@ -27,6 +27,10 @@ type Config struct {
 	//   EDGE_FEDERATION_URLS=http://host.docker.internal:18080,
 	//                       http://host.docker.internal:18081,
 	//                       http://host.docker.internal:18082
+	//
+	// When unset, edge falls back to OperatorURL — useful for dev
+	// against a single specific federation operator (e.g. when
+	// debugging one node) but not the canonical bring-up.
 	FederationURLs []string
 }
 
@@ -34,10 +38,13 @@ type Config struct {
 // host.docker.internal is the macOS / Docker Desktop bridge to the
 // host network; on Linux the compose `extra_hosts` entry maps it to
 // the host gateway so this works there too.
+//
+// Default OperatorURL points at federation operator 0's published
+// port (18080); see docker-compose.federation.yml in the main repo.
 func Load() Config {
 	cfg := Config{
 		Listen:       getenv("EDGE_LISTEN", ":8081"),
-		OperatorURL:  getenv("OPERATOR_URL", "http://host.docker.internal:8080"),
+		OperatorURL:  getenv("OPERATOR_URL", "http://host.docker.internal:18080"),
 		FeeOracleURL: getenv("FEE_ORACLE_URL", "https://mempool.space/api/v1/fees/recommended"),
 		FeeOracleTTL: 30 * time.Second,
 	}

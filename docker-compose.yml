@@ -2,11 +2,11 @@ name: enoch-edge
 
 # Standalone compose for the edge proxy. Brought up independently of
 # the enoch operator stack — they connect over the host network via
-# OPERATOR_URL=http://host.docker.internal:8080 by default.
+# the federation operators' published ports (18080-18082 by default).
 #
 # To run edge in the same docker network as enoch (skipping the host
 # bridge hop), uncomment the `networks:` block at the bottom and set
-# OPERATOR_URL=http://operator-0:8080.
+# EDGE_FEDERATION_URLS=http://operator-fed-0:8080,http://operator-fed-1:8080,http://operator-fed-2:8080.
 
 services:
   edge:
@@ -19,12 +19,16 @@ services:
       - "8081:8081"
     environment:
       EDGE_LISTEN: ":8081"
-      OPERATOR_URL: "http://host.docker.internal:8080"
-      # #102 federation mode: comma-separated operator URLs ordered by
-      # operator id. When set, /submit_tx is routed leader-aware (try
-      # current leader, on 503 read leader_id from body and retry).
-      # Set to empty (or unset) for single-op mode.
-      EDGE_FEDERATION_URLS: "${EDGE_FEDERATION_URLS:-}"
+      # OPERATOR_URL is the single-operator fallback used when
+      # EDGE_FEDERATION_URLS is empty. Defaults to federation
+      # operator 0's published port — useful for dev against one
+      # specific node, but not the canonical bring-up.
+      OPERATOR_URL: "${OPERATOR_URL:-http://host.docker.internal:18080}"
+      # #102 federation mode: comma-separated operator URLs ordered
+      # by operator id. /submit_tx routes leader-aware (try the
+      # last-known leader, on 503 read leader_id from body and retry).
+      # The canonical bring-up uses this; OPERATOR_URL is the fallback.
+      EDGE_FEDERATION_URLS: "${EDGE_FEDERATION_URLS:-http://host.docker.internal:18080,http://host.docker.internal:18081,http://host.docker.internal:18082}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
